@@ -1,0 +1,730 @@
+---
+title: "ML2 Clustering project"
+author: "Tendai Makuwerere and Cynara Nyahoda"
+date: "5/2/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+### Setup
+
+Loading all necessary packages
+
+```{r}
+library(tidyverse)
+library(MASS)
+library(tree)
+library(caret)
+library(rpart)
+library(rpart.plot)
+library(rattle)
+library(pROC)
+library(here)
+library(e1071)
+library(rpart)
+library(caretEnsemble)
+
+```
+
+## Loading data
+
+
+
+The data set includes 5000 observations with fourteen variables divided into four different measurement categories. 
+
+We are going to use this data set to try and identify account holders who will take up loans offers. This will make the banks marketing and advertising easier as they will target customers with a high chance of acceptance hence increasing the banks loan books. 
+
+
+```{r}
+data <- read_csv("C:/Users/Tendai/Documents/DS3/ML2/Project/Data/Bank_Personal_Loan_Modelling.csv")
+```
+
+## Data Checking and Cleaning
+````{r}
+
+#data.class
+#view(data)
+
+# Viewing data 
+data %>% glimpse()
+
+
+# Viewing if our data contains na
+
+colSums(is.na(data))
+
+
+# Changing Column names 
+
+colnames(data) [colnames(data) %in% c('ZIP Code','Personal Loan','Securities Account','CD Account')]<- c('ZIP_Code','Personal_Loan', 'Securities_Account','CD_Account')
+
+# Converting the output variale to be a factor 
+data$ZIP_Code <- as.factor(data$ZIP_Code)
+data$Securities_Account <- as.factor(data$Securities_Account)
+data$Education <- as.factor(data$Education)
+data$Personal_Loan <- as.factor(data$Personal_Loan)
+data$CreditCard <- as.factor(data$CreditCard)
+data$Online <- as.factor(data$Online)
+data$CD_Account<- as.factor(data$CD_Account)
+
+````
+````{r}
+
+````
+
+Creating a new data set ndata that we will use for running an analysis and also removing column ID, it does not add value to our models. 
+```{r}
+ndata <- data[,-1]
+head(ndata)
+table(ndata$Personal_Loan)
+
+#Assigning variables Yes for 1 and No for 0 
+
+ndata$Personal_Loan <- (ifelse(ndata$Personal_Loan == 0, "No", "Yes"))
+
+```
+
+Our main objective is to predict that a given observation customers who are likely going to take up our loans: `Personal_Loan = "Yes"`. We take a glance at the distribution of the target this will help us understand how the predictive variables are distributed.
+
+```{r }
+table(ndata$Personal_Loan)
+table(ndata$Personal_Loan)/length(ndata$Personal_Loan)
+```
+
+Hence, about 
+`r as.numeric(round(table(ndata$Personal_Loan)[2]/length(ndata$Personal_Loan)*100, 2))` % of observations did not take up loans. 
+
+We are setting the levels `Yes` as the first one.
+
+```{r }
+ndata$Personal_Loan <- factor(ndata$Personal_Loan, levels = c("Yes", "No"))
+table(ndata$Personal_Loan)
+```
+
+
+We divide data set into ndata.train and ndata.train testing sample. `70%` for training data set and `30%` for testing data set. 
+
+```{r}
+set.seed(12345)
+ndata.train_obs <- createDataPartition(ndata$Personal_Loan, 
+                                    p = 0.7, 
+                                    list = FALSE) 
+ndata.train <- ndata[ndata.train_obs,]
+ndata.test  <- ndata[-ndata.train_obs,]
+```
+#MODEL DATASET 
+
+Below,we define the formula of the model to be used for the whole project.
+
+```{r}
+model1.formula <- 
+  Personal_Loan ~ 
+  Age  + Experience + Income + 
+   CCAvg + Education + Mortgage + Securities_Account + 
+  CD_Account + Online + CreditCard
+
+```
+
+
+
+Below we are creating balanced ndata.train data.
+````{r}
+ndata.train <-
+  ROSE::ovun.sample(formula = model1.formula,
+                             data = ndata[ndata.train_obs,],
+                             method = "both",
+                             p = 0.5,
+                             N = length(ndata.train_obs),
+                             seed = 12345)[["data"]]
+
+#ndata.train %>% select(Personal_Loan) %>% table(useNA = "always")
+
+````
+
+Checking frequencies of the target variable inside the ndata.train and the ndata.test set. 
+
+```{r }
+table(ndata.train$Personal_Loan)
+table(ndata.test$Personal_Loan)
+table(ndata.train$Personal_Loan)/length(ndata.train$Personal_Loan)
+table(ndata.test$Personal_Loan)/length(ndata.test$Personal_Loan)
+```
+###MODELS
+
+## Tree model 
+```{r }
+ndata.tree <- 
+  rpart(model1.formula,
+        data = ndata.train,
+        method = "class",
+        minsplit = 200,
+        minbucket = 100,
+        maxdepth = 10,
+        # we don't impose any restriction on the tree growth 
+        cp = -1)
+fancyRpartPlot(ndata.tree)
+```
+
+Below is a list of how nodes were split from the root to leaf nodes.
+
+```{r }
+ndata.tree
+```
+
+
+## PRUNING
+
+We pruned our tree to reduce its size by keeping only important information and try to avoid over fitting of our model. 
+
+
+```{r }
+ndata.tree1 <- 
+  rpart(model1.formula,
+        data = ndata.train,
+        method = "class",
+        minsplit = 300, 
+        minbucket = 200, 
+        maxdepth = 5, # default
+        cp = -1)
+fancyRpartPlot(ndata.tree1)
+ndata.tree1
+```
+
+
+Below we use prediction on ndata.train set, we used class for us to predict directly.
+
+```{r }
+pred.tree1 <- predict(ndata.tree1,
+                      ndata.train,
+                      type = "class")
+head(pred.tree1)
+```
+
+
+Below we analyse how our data can fit the model to the ndata.train set using a confusion matix.
+
+```{r }
+set.seed(12345)
+confusionMatrix(data = pred.tree1, # predictions
+                # actual values
+                reference = as.factor(ndata.train$Personal_Loan),
+                # definitions of the "success" label
+                positive = "Yes") 
+```
+
+The results contain:
+
+```{r }
+```
+
+After assessing the `cp` values coefficient to figure out which one will provide us with the best tree with minimum prediction error in the cross validataion. We choose `cp` value with lowest prediction error in the cross-validation `xstd`.
+
+
+Viewing the results of cross-validation..
+
+```{r }
+printcp(ndata.tree1)
+```
+
+The lowest cp value is the one with 2 splits with an error `0.011042`.
+
+
+We seleced the complexity parameter with the lowest prediction error then use it for pruning our tree.
+
+
+ Below we will see the number of the `cp` row with the lowest error .
+
+```{r }
+opt <- which.min(ndata.tree1$cptable[, "xerror"])
+opt
+```
+
+Below we assigned cp value to cp:
+
+```{r }
+cp <- ndata.tree1$cptable[opt, "CP"]
+cp
+```
+
+We used to prune our tree.
+
+```{r }
+ndata.tree1p <- 
+  prune(ndata.tree1, cp = cp)
+fancyRpartPlot(ndata.tree1p)
+```
+
+We use fancyplot to print the first tree. 
+
+```{r }
+fancyRpartPlot(ndata.tree1)
+```
+
+We predict the train result with ndata.tain for both trees then compared the pruned tree1p with the first tree1 and compare the results.  
+
+
+```{r }
+pred.train.tree1  <- predict(ndata.tree1,  ndata.train)
+pred.train.tree1p <- predict(ndata.tree1p, ndata.train)
+```
+
+# ROC curve values for both tree1 and tree1p
+
+```{r }
+ROC.train.tree1  <- roc(as.numeric(ndata.train$Personal_Loan == "Yes"), 
+                        pred.train.tree1[,1])
+ROC.train.tree1p <- roc(as.numeric(ndata.train$Personal_Loan == "Yes"), 
+                        pred.train.tree1p[,1])
+```
+We plot the AUC to see how the models are performing. Models that perform well will have `gini` close to or equal to 1 then close to zero for non performing models. 
+
+```{r }
+list(
+  ROC.train.tree1  = ROC.train.tree1,
+  ROC.train.tree1p = ROC.train.tree1p
+) %>%
+  pROC::ggroc(alpha = 0.5, linetype = 1, size = 1) + 
+  geom_segment(aes(x = 1, xend = 0, y = 0, yend = 1), 
+               color = "grey", 
+               linetype = "dashed") +
+  labs(subtitle = paste0("Gini TRAIN: ",
+                         "tree1 = ", 
+                         round(100*(2 * auc(ROC.train.tree1) - 1), 1), "%, ",
+                         "tree1p = ", 
+                         round(100*(2 * auc(ROC.train.tree1p) - 1), 1), "% ")) +
+  theme_bw() + coord_fixed() +
+  # scale_color_brewer(palette = "Paired") +
+  scale_color_manual(values = RColorBrewer::brewer.pal(n = 4, 
+                                                       name = "Paired")[c(1, 3)])
+```
+
+The pruned model has a lower value of the Gini coefficient.We repeated the calculations for the testing set.
+
+```{r }
+pred.test.tree1  <- predict(ndata.tree1, 
+                            ndata.test)
+pred.test.tree1p <- predict(ndata.tree1p, 
+                            ndata.test)
+ROC.test.tree1  <- roc(as.numeric(ndata.test$Personal_Loan == "Yes"), 
+                       pred.test.tree1[, 1])
+ROC.test.tree1p <- roc(as.numeric(ndata.test$Personal_Loan == "Yes"), 
+                       pred.test.tree1p[, 1])
+```
+
+We add the ROC curves to the previous plot. 
+
+```{r }
+list(
+  ROC.train.tree1  = ROC.train.tree1,
+  ROC.test.tree1   = ROC.test.tree1,
+  ROC.train.tree1p = ROC.train.tree1p,
+  ROC.test.tree1p  = ROC.test.tree1p
+) %>%
+  pROC::ggroc(alpha = 0.5, linetype = 1, size = 1) + 
+  geom_segment(aes(x = 1, xend = 0, y = 0, yend = 1), 
+               color = "grey", 
+               linetype = "dashed") +
+  labs(subtitle = paste0("Gini TRAIN: ",
+                         "tree1 = ", 
+                         round(100*(2 * auc(ROC.train.tree1) - 1), 1), "%, ",
+                         "tree1p = ", 
+                         round(100*(2 * auc(ROC.train.tree1p) - 1), 1), "% ",
+                         "Gini TEST: ",
+                         "tree1 = ", 
+                         round(100*(2 * auc(ROC.test.tree1) - 1), 1), "%, ",
+                         "tree1p = ", 
+                         round(100*(2 * auc(ROC.test.tree1p) - 1), 1), "% "
+                         )) +
+  theme_bw() + coord_fixed() +
+  scale_color_brewer(palette = "Paired")
+```
+
+Tree1 model perfomed better in testing while model treep1 gave us lower results in the testing compared to the training data. 
+
+Alternatively, to estimate the tree we can use the `caret` package. 
+
+```{r }
+tc <- trainControl(method = "cv",
+                   number = 10, 
+                   classProbs = TRUE,
+                   summaryFunction = twoClassSummary)
+```
+
+We define the range for values of the `cp` parameter for the cross validation
+process with respect to AUC (ROC) values.
+
+```{r }
+modelLookup("rpart")
+cp.grid <- expand.grid(cp = seq(0, 0.03, 0.001))
+set.seed(12345)
+ndata.tree2 <- 
+  train(model1.formula,
+        data = ndata.train, 
+        method = "rpart", 
+        metric = "ROC",
+        trControl = tc,
+        tuneGrid  = cp.grid)
+```
+
+Below we can view the results.
+
+```{r }
+ndata.tree2
+
+pred.train.tree2 <- predict(ndata.tree2, 
+                            ndata.train)
+ROC.train.tree2  <- roc(as.numeric(ndata.train$Personal_Loan == "Yes"), 
+                        pred.train.tree1[, 1])
+
+pred.test.tree2  <- predict(ndata.tree2, 
+                            ndata.test)
+ROC.test.tree2  <- roc(as.numeric(ndata.test$Personal_Loan == "Yes"), 
+                       pred.test.tree1[, 1])
+
+cat("Gini train = ", 2 * ROC.train.tree2$auc - 1, "\n", sep = "")
+cat("Gini test  = ", 2 * ROC.test.tree2$auc - 1,  "\n", sep = "")
+```
+
+
+
+## VARIABLE IMPORTANCE
+
+From these results returned we can find  importance of each predictor.
+
+```{r }
+tree1.importance <- ndata.tree1$variable.importance
+tree1.importance
+```
+
+The measure of predictors importance is the sum of quality of those splits split performance for predictors . We can view the plot below
+
+```{r }
+# margins c(bottom, left, top, right) 
+# default c(5, 4, 4, 2) + 0.1.
+par(mar = c(5.1, 6.1, 4.1, 2.1))
+barplot(rev(tree1.importance), # vactor
+        col = "blue",  # colors
+        main = "imporatnce of variables in model tree1",
+        horiz = T,  # horizontal type of plot
+        las = 1,    # labels always horizontally 
+        cex.names = 0.6)
+```
+
+In this case, five most important predictors are: 
+`INCOME`,`Securities Account`, `CCAvg`, `MORTGAGE`, `CD ACCOUNT`, `EDUCATION`.
+
+
+
+#######################################################################
+#
+# ESEMBLING 
+#
+#######################################################################
+
+
+
+Setting the parameters for cross-validation process. 
+
+
+```{r}
+my_control <- trainControl(
+  method = "boot",
+  number = 25,
+  savePredictions = "final",
+  classProbs = TRUE,
+  index = createResample(ndata.train$Personal_Loan, 25),
+  summaryFunction = twoClassSummary
+)
+```
+
+
+## Bottom-layer models, `caretList()`
+
+We used 'caretList' function to estimate models for each of them we will use parameters that we defined in my control object. 
+
+
+```{r}
+model_list <- caretList(
+  Personal_Loan ~ ., 
+  data = ndata.train,
+  metric = "ROC",
+  trControl = my_control,
+  methodList = c("glm", "rpart")
+)
+
+
+```
+
+
+Merging predictions on the testing sample for the two models into
+one data frame.
+
+```{r}
+model_preds <-
+  lapply(model_list, predict, newdata = ndata.test, type = "prob") %>%
+  lapply(function(x) x[,"Yes"]) %>%
+  data.frame()
+```
+Predictions calculations.
+
+```{r}
+
+p <- predict(model_list, newdata = ndata.test) %>% as.data.frame()
+head(p, 10)
+```
+
+Calculation of the values of the ROC curve for the considered models.
+
+```{r}
+ndata.ROC.test.glm <-
+  roc(as.numeric(ndata.test$Personal_Loan == "Yes"), 
+      p[, "glm"])
+ndata.ROC.test.rpart <-
+  roc(as.numeric(ndata.test$Personal_Loan == "Yes"), 
+      p[, "rpart"])
+```
+
+Plotting the ROC curves 
+
+
+```{r}
+list(
+  ndata.ROC.test.glm    = ndata.ROC.test.glm,
+  ndata.ROC.test.rpart  = ndata.ROC.test.rpart) %>%
+  pROC::ggroc(alpha = 0.5, linetype = 1, size = 1) + 
+  geom_segment(aes(x = 1, xend = 0, y = 0, yend = 1), 
+               color = "grey", 
+               linetype = "dashed") +
+  labs(subtitle = paste0("Gini TEST: ",
+                         "glm = ", 
+                         round(100 * (2 * auc(ndata.ROC.test.glm) - 1), 3), "%, ",
+                         "rpart = ", 
+                         round(100 * (2 * auc(ndata.ROC.test.rpart) - 1), 3), "% ")) +
+  theme_bw() + coord_fixed() +
+  scale_color_brewer(palette = "Set2")
+```
+
+
+We got the same result for ensemble2 and ensemble. We are advanced to boosting model.
+
+
+```{r}
+  gbm_ensemble <- caretStack(
+    model_list,
+    method = "gbm",
+    verbose = FALSE,
+    tuneLength = 10,
+    metric = "ROC",
+    trControl = trainControl(
+      method = "boot",
+      number = 10,
+      savePredictions = "final",
+      classProbs = TRUE,
+      summaryFunction = twoClassSummary
+    )
+  )
+  
+```
+
+
+We calculate the AUC for this model:
+
+```{r}
+model_preds$ensemble <- predict(gbm_ensemble, newdata = ndata.test, type = "prob")
+caTools::colAUC(model_preds, ndata.test$Personal_Loan)
+```
+
+We present the ROC curve:
+
+```{r}
+ndata.ROC.test.ensemble <-
+ndata.ROC.test.ensemble <-
+  roc(as.numeric(ndata.test$Personal_Loan == "Yes"), 
+      model_preds$ensemble)
+
+list(
+  ndata.ROC.test.glm       = ndata.ROC.test.glm,
+  ndata.ROC.test.rpart     = ndata.ROC.test.rpart,
+  ndata.ROC.test.ensemble = ndata.ROC.test.ensemble) %>%
+  pROC::ggroc(alpha = 0.5, linetype = 1, size = 1) + 
+  geom_segment(aes(x = 1, xend = 0, y = 0, yend = 1), 
+               color = "grey", 
+               linetype = "dashed") +
+  labs(
+    title = "Gini TEST", 
+    subtitle = paste0("glm = ", 
+                      round(100 * (2 * auc(ndata.ROC.test.glm) - 1), 3), "%, ",
+                      "rpart = ", 
+                      round(100 * (2 * auc(ndata.ROC.test.rpart) - 1), 3), "%, ",
+                      "ensemble = ", 
+                      round(100 * (2 * auc(ndata.ROC.test.ensemble) - 1), 3), "% ")) +
+  theme_bw() + coord_fixed() +
+  scale_color_brewer(palette = "Set1")
+```
+
+Conclusion: The model shows that esemble and ensemble2 are making better predictions 
+how ever this model is not providing us with optimal predictictions compared to the other models.
+
+
+````{r}
+
+````
+
+###########################################################
+#                                                         #
+#      BAGGING                                            #
+#                                                         #
+###########################################################
+
+We will estimate 21 different models. We used an odd number to avoid the problem with "majority vote" when calculating predictions.
+
+```{r }
+n <- nrow(ndata.train)
+
+# we create an empty list to collect results 
+results_logit <- list()
+
+for (sample in 1:21) {
+  message(sample)
+  # we draw n-element sample (with replacement) 
+  set.seed(12345 + sample)
+  data_sample <- 
+    ndata.train[sample(x = 1:n, 
+                         size = n,
+                         replace = TRUE),]
+  # paste as the next element of the list 
+  results_logit[[sample]] <- glm(model1.formula,
+                                 data_sample, 
+                                 family = binomial(link = "logit"))
+}
+rm(data_sample)
+```
+
+Now we make predictions for the testing set for each of the estimated models.
+
+Just for now, let us examine how it looks for the single model only.
+
+```{r }
+predict(object = results_logit[[1]],
+        newdata = ndata.test,
+        type = "response") %>%  
+  head()
+```
+
+From the above results observe predicted probabilities for the six first observations.
+
+Below , we have for all our models. 
+
+```{r }
+ndata.pred_bag <- 
+  sapply(results_logit,
+         function(x) 
+           predict(object = x,
+                   newdata = ndata.test,
+                   type = "response")) %>% 
+  data.frame()
+```
+
+Viewing structure of the resulting data frame:
+
+```{r}
+head(ndata.pred_bag)
+```
+
+Histogram plot representing frequency of "votes" for a particular observation.
+
+```{r}
+hist(rowSums(ndata.pred_bag < 0.5), 
+     breaks = 0:21,
+     main = "Frequency of votes for single observations")
+```
+
+
+we estimated the model on the full ndata.train set
+(without the cross-validation process).
+
+```{r }
+ctrl_nocv <- trainControl(method = "none")
+ndata.logit <- 
+  train(model1.formula, 
+        data = ndata.train, 
+        method = "glm",
+        family = "binomial", 
+        trControl = ctrl_nocv)
+```
+
+We examined the accuracy of this model.
+
+```{r }
+confusionMatrix(data = predict(ndata.logit,
+                               newdata = ndata.test),
+                reference = ndata.test$Personal_Loan,
+                positive = "Yes")
+```
+
+```{r }
+ndata.pred_bag_final2 <- rowMeans(ndata.pred_bag)
+```
+
+Next, we calculate values of the ROC curve. First, only for averaged 
+probabilities. 
+
+```{r }
+ndata.ROC.test.bag <-
+  roc(as.numeric(ndata.test$Personal_Loan == "Yes"), 
+      ndata.pred_bag_final2)
+```
+
+and next for the logistic model:
+
+```{r }
+ndata.ROC.test.logit <-
+  roc(as.numeric(ndata.test$Personal_Loan == "Yes"), 
+      predict(ndata.logit, newdata = ndata.test, type = "prob")[, "Yes"])
+```
+
+Now, we can present the ROC curves on the plot:
+
+```{r }
+list(
+  ndata.ROC.test.bag   = ndata.ROC.test.bag,
+  ndata.ROC.test.logit = ndata.ROC.test.logit 
+  ) %>%
+  pROC::ggroc(alpha = 0.5, linetype = 1, size = 1) + 
+  geom_segment(aes(x = 1, xend = 0, y = 0, yend = 1), 
+               color = "grey", 
+               linetype = "dashed") +
+  labs(subtitle = paste0("Gini TEST: ",
+                         "bag = ", 
+                         round(100 * (2 * auc(ndata.ROC.test.bag) - 1), 3), "%, ",
+                         "logit = ", 
+                         round(100 * (2 * auc(ndata.ROC.test.logit) - 1), 3), "% ")) +
+  theme_bw() + coord_fixed() +
+  scale_color_brewer(palette = "Set2")
+```
+
+
+Bagging have improved the results but did not give the best result interms of accuracy but we now have a higher sensitivity ,which is what will allow us to predict better the persons who are willing to take up a loan. 
+
+
+We calculate predictions now based on averaged
+probabilities of taking the answer `"Yes"`.
+````{r}
+
+````
+#######################################################################################
+#                                                                                     #
+# Summary                                                                             #
+#                                                                                     #
+#######################################################################################
+
+The AUC results shows that tree1 with a 94.4% is performing better than esembling boots which got gini 93.115% and Bagging  logit and bag with gini 92.6%. 
+
+However, accuracy for test data set was higher for bagging with 89.13% compared to 88% for tree models.In addition bagging have a higher rate of specificity which makes it the best model to predict customers who want to take up loans. Hence we believe that bagging is the best model the use for predicting with high precision customers with high chances of signing up for a loan. 
+
+````{r}
+````
